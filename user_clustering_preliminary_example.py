@@ -1,18 +1,3 @@
-# import numpy as np
-# import pandas as pd
-#
-# import datetime
-# from dateutil import tz
-#
-# import pickle
-
-
-
-
-
-
-
-
 
 
 def GenerateUserGroups(filename='MasterDataLocNoMessages.csv'):
@@ -319,10 +304,6 @@ def ClusterGivenUsers(user_hashtags, geo_array):
     '''
 
     import numpy as np
-    # import pandas as pd
-
-    # import datetime
-    # from dateutil import tz
 
     import pickle
 
