@@ -1,6 +1,5 @@
 import pandas as pd
 import reverse_geocoder as rg
-from datetime import datetime
 
 #read data from the csv file
 data = pd.read_csv('tweetData.csv')
@@ -102,7 +101,20 @@ def determineAuthor(Content, hashtag, location, time):
         
     common_in_all=set(content_matched_data) & set(date_list) & set(hashTag_data)
     
-    print(common_in_all)
+    if len(common_in_all) == 0 and hashtag is None:
+        common_in_all=set(content_matched_data) & set(date_list)
+    if len(common_in_all) == 0 and Content is None:
+        common_in_all=set(date_list) & set(hashTag_data)
+    if len(common_in_all) == 0 and time is None:
+        common_in_all=set(content_matched_data) & set(hashTag_data)
+    
+    
+    if len(common_in_all) == 0 and time is None and Content is None:
+        common_in_all=set(hashTag_data)
+    if len(common_in_all) == 0 and hashtag is None and Content is None:
+        common_in_all=set(date_list)
+    if len(common_in_all) == 0 and hashtag is None and time is None:
+        common_in_all=set(content_matched_data)
     
     if len(common_in_all) == 1:
         return data.iloc[[list(common_in_all).pop()]].get('username')
@@ -114,5 +126,9 @@ def determineAuthor(Content, hashtag, location, time):
         return data.iloc[[hashTag_data[0]]].get('username')
     elif location is not None:
         location_data=getLocationData(content_matched_data,date_list,hashTag_data,location)
+        print(common_in_all)
         common_in_all_four=common_in_all & set(location_data)
         return data.iloc[[list(common_in_all_four).pop()]].get('username') 
+    
+    
+print(determineAuthor("wrap",None,"Los Angeles","2022-03-27"))
