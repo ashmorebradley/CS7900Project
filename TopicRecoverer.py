@@ -15,6 +15,10 @@ from nltk.tokenize import RegexpTokenizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.feature_extraction import text
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+import TopicAssigner #TopicRecoverer
+import json
+
 #########################################
 #Variables used by the agent
 #########################################
@@ -25,6 +29,15 @@ topicDataProcessed = {}
 #topicData is a topic-indexed dictionary. Each topic name points to a list of statistics that can be used to decide the most-likely topic of a deleted tweet.
 #Contents of this diciton ary are TBD.
 
+knownTopics = []
+
+probMatrix = {}
+probMatrixUser = {}
+probMatrixHash = {}
+probMatrixLoc = {}
+
+
+stopWords = text.ENGLISH_STOP_WORDS.union({"http", "https", "Https", "Https:", "t", "s"})
 
 #########################################
 #Function used to add data to the agent.
@@ -36,73 +49,213 @@ topicDataProcessed = {}
 #date - A string or date time object
 #topic - A string
 
+def removeStopwords(l, stops):
+    toReturn = []
+    for word in l:
+        for s in stops:
+            if(word != s):
+                toReturn.append(word)
+                
+    return toReturn
+########################################
+##Accepts user data and reuturns a list of topics
+##Returns a dictionary of topic : prob.
+##A simple baysian analysis
+####################################
+def decodeListOfTopics(userD):
+    toReturn = {}
+    for topic in userD:
+        if topic in toReturn:
+            toReturn[topic] += 1
+        else:
+            toReturn[topic] = 1
+            
+    numTopics = len(userD)
+    
+    for key in toReturn.keys():
+        toReturn[key] = toReturn[key] / numTopics
+        
+    toReturn["knownTopicCount"] = numTopics
 
-def loadData(tweetId, user = 0, content, hashtag = 0, location = 0, date = 0, time = 0, topic = 0):
-    #This funciton loads data into the topicDataRaw dictionary
+#####################
+    #Updates values when a new topic is seen
+def updateTopicsDictionary(topDic):
+    divisor = topDic["knownTopicCount"]
+    toReturn = topDic
+    for key in toReturn.keys():
+        if key != "knownTopicCount":
+            toReturn[key] = (toReturn[key] + 1) / divisor
+            
+    return toReturn
+            
+        
+      
     
-    #content == document list.
-    # Initialize regex tokenizer
-    tokenizer = RegexpTokenizer(r'\w+')
+#Content shouldn't be given.
+def loadData(tweetId, content = 0, user = 0, hashtag = 0, location = 0, date = 0, time = 0, topic = 0):
+    #Get known topics.
+    knownTopics = PartialTopicAssigner.getKnownTopics()
     
-    stopWords = text.ENGLISH_STOP_WORDS.union({"http", "https", "Https", "Https:", "t", "s"})
+    tweets = []
+    #This is fragile. It assumes that all input arrays are the same length.
+    #This should always be true but if something goes wrong there is no check.
+    for i in range(len(tweetId)):
+        tweets.append( (tweetId[i], content[i], user[i], hashtag[i], location[i], date[i], time[i]  ) )
+        
+    userData = {} #In the form User : List of topics
+    hashTagData = {}
+    locationData = {}
+    dateData = {}
     
-#    print(stopWords)
- #   print("-----STOP WORDS----")
-    # Vectorize document using TF-IDF
-    tfidf = TfidfVectorizer(lowercase=True,
-                            stop_words=stopWords,
-                            ngram_range = (1,1),
-                            tokenizer = tokenizer.tokenize)
+    for twt in tweets:
+        #3 is user
+        topicHold = PartialTopicAssigner.determineTopic(twt[1])
+        print("TOPIC IS::      " + str(topicHold))
+        #Do user things
+        if twt[2] in userData:
+            userData[twt[2]].append( topicHold )
+        else:
+            userData[twt[2]] = [ topicHold ]
+        
+        #Do user things
+        if twt[3] != '[]':      #Ignore empty hashtags.
+            lst = twt[3][1:-1]
+            lst = lst.split(',')
+            for i in range(len(lst)):
+                lst[i] = lst[i][1:-1]
+                
+      #      lst = json.loads(twt[3])    #Convert from JSON string to python list.
+            for ht in lst:
+                if ht in hashTagData:
+                    hashTagData[ht].append( topicHold )
+                else:
+                    hashTagData[ht] = [ topicHold ]
+                
+            
+        #Do location things
+        if twt[4] in locationData:
+            locationData[twt[4]].append( topicHold )
+        else:
+            locationData[twt[4]] = [ topicHold ]
+        
+        #Do date things
+        if twt[5] in dateData:
+            dateData[twt[5]].append( topicHold )
+        else:
+            dateData[twt[5]] = [ topicHold ]
+            
+
+    #Manipulate topic lists...
+    #For every user, calculate the topic frequency.
+    for key in userData.keys():
+        topicDic = {}
+        topics = userData[key]
+        #For every topic entry...
+        for topic in topics:
+            if topic in topicDic:
+                topicDic[topic] = topicDic[topic] + 1
+            else:
+                topicDic[topic] = 1
+                
+        #Have all the topic totals, now convert to a probability.
+        for topic in topics:
+            topicDic[topic] = topicDic[topic] / len(topics)
+        
+        #Got the dictonary of topics statistics....Add to the mater dictionary. 
+        probMatrixUser[key] = topicDic
     
-    # Fit and Transform the documents
-    train_data = tfidf.fit_transform(content)   
-    
-    # Define the number of topics or components
-    num_components=4
-    
-    # Create LDA object
-    model=LatentDirichletAllocation(n_components=num_components)
-    
-    # Fit and Transform SVD model on data
-    lda_matrix = model.fit_transform(train_data)
-    
-    # Get Components 
-    lda_components=model.components_
-    
-    terms = tfidf.get_feature_names()
-    
-    #Now have a list of topics. Propigate in dictionary. 
-    for index, component in enumerate(lda_components):
-        zipped = zip(terms, component)
-        top_terms_key=sorted(zipped, key = lambda t: t[1], reverse=True)[:7]
-        top_terms_list=list(dict(top_terms_key).keys())
-#        print("Topic "+str(index)+": ",top_terms_list)      #Debug statement. 
-        print("Got topics")
-        #Adding each top_term as a topic. This may be a bad idea.
-        for t in top_terms_list:
-            print("evaluating topic: " + str(t))
-            for i in range(len(user)):
-                if(t in content[i]):    #Topic is in tweet. Add to data.
-                    if not t in topicDataRaw.keys():
-                        topicDataRaw[t] = [(content[i], user[i], time[i], hashtag[i])]
-                    else:
-                        topicDataRaw[t].append( (content[i], user[i], time[i], hashtag[i]) )
-    
-    
-    
-    print("Done")
-    
-def processRawData():
-    #This funciton process data in the topicDataRaw variable into a usable form and stores the result in topicDataProcessed
-    
-    
-    print("Done")
+    #For every hashtaag
+    for key in hashTagData:
+       topicDic = {}
+       topics = hashTagData[key]
+       #For every topic entry...
+       for topic in topics:
+           if topic in topicDic:
+               topicDic[topic] = topicDic[topic] + 1
+           else:
+               topicDic[topic] = 1
+                
+        #Have all the topic totals, now convert to a probability.
+       for topic in topics:
+           topicDic[topic] = topicDic[topic] / len(topics)
+        
+        #Got the dictonary of topics statistics....Add to the mater dictionary. 
+       probMatrixHash[key] = topicDic
+        
+    #For every location.  
+    for key in locationData:
+       topicDic = {}
+       topics = locationData[key]
+       #For every topic entry...
+       for topic in topics:
+           if topic in topicDic:
+              topicDic[topic] = topicDic[topic] + 1
+           else:
+              topicDic[topic] = 1
+                
+        #Have all the topic totals, now convert to a probability.
+       for topic in topics:
+           topicDic[topic] = topicDic[topic] / len(topics)
+        
+        #Got the dictonary of topics statistics....Add to the mater dictionary. 
+       probMatrixLoc[key] = topicDic
     
 
-def determineTopic(content):
-    print("Done")    
     
-#This fuction uses data in the topicDataProcessed variable to determine the most-likely topic.    
-def determineTopic( User, hashtags, location, time):
+#This fuction uses data in the topicDataProcessed variable to determine the most-likely topic.        
+def determinTopic(user = None, hashtags = None, location = None, date = None, time = None):
+    #Calculate probabilities
+    #P(topic | User)
+    userProbs = []
+    hashProbs = []
+    locProbs = []
     
-    print("Done")
+    if user != None:
+        userProbs = probMatrixUser[user]
+        
+    #P(topic | Hashtag)
+    if hashtags != None: 
+       hashProbs = probMatrixHash[hashtags]
+    
+    #P(Topic | Location)
+    if location != None:
+        locProbs = probMatrixLoc[loc]
+    
+    maxLen = max(len(userProbs), len(hashProbs), len(locProbs))
+    inuse = ( len(userProbs) > 0, len(hashProbs) > 0, len(locProbs) > 0 )
+    
+    finalProbs = []
+    for i in range(maxLen):
+        if inuse[0] and inuse[1] and inuse[2]:
+            finalProbs.append(userProbs[i][1] * hashProbs[i][1] * locProbs[i][1])
+            
+        elif inuse[0] and inuse[1]:
+            finalProbs.append(userProbs[i][1] * hashProbs[i][1] )    
+            
+        elif inuse[0] and inuse[2]:
+            finalProbs.append(userProbs[i][1]  * locProbs[i][1])
+            
+        elif inuse[1] and inuse[2]:
+            finalProbs.append(hashProbs[i][1] * locProbs[i][1])
+            
+        elif inuse[0]:
+            finalProbs.append(userProbs[i][1])
+            
+        elif inuse[1]:
+            finalProbs.append(hashProbs[i][1] )
+        
+        elif inuse[2]:
+            finalProbs.append(locProbs[i][1])
+        
+    #Find max
+    mx = 0 
+    loc = 0
+    i = 0
+    for x in finalProbs:
+        if x > mx:
+            mx = x
+            loc = i
+        
+        i += 1
+        
+    return learnedTopics[i]
